@@ -303,4 +303,191 @@ ax.set(
 ax.legend(loc="upper left")
 plt.plot()
 
+
+
 # %%
+# ==============================================================================
+# START OF PROBLEM SET 4
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# PS4 Ex 1: Monotonicity Constraints
+# ------------------------------------------------------------------------------
+
+# 1. Plot average claims per BonusMalus group
+# -------------------------------------------------------
+# Group by BonusMalus and calculate weighted average PurePremium
+df_plot = (
+    df.groupby("BonusMalus")
+    .apply(lambda x: pd.Series({
+        "WeightedPurePremium": x["ClaimAmountCut"].sum() / x["Exposure"].sum(),
+        "Exposure": x["Exposure"].sum()
+    }))
+    .reset_index()
+)
+
+# For clarity, filter out data points with low exposure (Exposure < 100) 
+# to avoid extreme noise in the plot.
+df_plot_filtered = df_plot[df_plot["Exposure"] > 100]
+
+plt.figure(figsize=(10, 6))
+plt.scatter(df_plot_filtered["BonusMalus"], df_plot_filtered["WeightedPurePremium"], 
+            alpha=0.6, label="Observed Average")
+plt.plot(df_plot_filtered["BonusMalus"], df_plot_filtered["WeightedPurePremium"], 
+         alpha=0.3, color='blue') # Connect lines to visualize the trend
+
+plt.xlabel("BonusMalus Score")
+plt.ylabel("Weighted Pure Premium")
+plt.title("Observed Pure Premium per BonusMalus Level")
+plt.grid(True, alpha=0.3)
+plt.legend()
+plt.show()
+
+# Quesiton1: What will/could happen if we do not include a monotonicity constraint?
+# Answer: Without constraints, tree models might capture local data fluctuations (noise).
+# For example, if people with BonusMalus=105 happen to be lucky and have no claims 
+# in the training set, the model might think 105 is lower risk than 100. 
+# This violates the logical expectation of insurance pricing.
+
+# %%
+# 2. Define Monotonicity Constraints
+# -------------------------------------------------------
+# The monotone_constraints parameter in LightGBM requires a list.
+# List length = number of features.
+# 0 = no constraint, 1 = increasing, -1 = decreasing.
+
+# Get feature name list (based on previous X_train_t)
+feature_names = X_train_t.columns.tolist()
+
+# Initialize a list of zeros (no constraints)
+monotone_constraints = [0] * len(feature_names)
+
+# Find the index of BonusMalus
+bm_index = feature_names.index("BonusMalus")
+
+# Set BonusMalus to 1 (increasing monotonicity constraint)
+monotone_constraints[bm_index] = 1
+
+print(f"Feature list: {feature_names}")
+print(f"Constraint list: {monotone_constraints}")
+
+# %%
+# 3. Train Constrained LGBM with Cross-Validation
+# -------------------------------------------------------
+# Create a new Pipeline named constrained_lgbm
+
+# Define LGBM Regressor with constraints (inner estimator)
+lgbm_estimator = LGBMRegressor(
+    objective="tweedie",
+    tweedie_variance_power=1.5,
+    monotone_constraints=monotone_constraints, # <--- Key change: Add constraints
+    subsample=0.8,
+    colsample_bytree=0.8,
+    random_state=0,
+    verbose=-1
+)
+
+# Create the pipeline called 'constrained_lgbm' 
+constrained_lgbm = Pipeline([
+    ("estimate", lgbm_estimator)
+])
+
+# Use the same parameter grid as before for fair comparison
+param_grid = {
+    "estimate__learning_rate": [0.01, 0.05, 0.1],
+    "estimate__n_estimators": [200, 500, 800],
+}
+
+cv_constrained = GridSearchCV(
+    estimator=constrained_lgbm, 
+    param_grid=param_grid,
+    cv=3,
+    n_jobs=-1
+)
+
+# Train the model
+print("Training constrained LGBM...")
+cv_constrained.fit(X_train_t, y_train_t, estimate__sample_weight=w_train_t)
+
+# %%
+# 4. Predict and Evaluate
+# -------------------------------------------------------
+# Save predictions to the pp_t_lgbm_constrained column
+df_test["pp_t_lgbm_constrained"] = cv_constrained.best_estimator_.predict(X_test_t)
+df_train["pp_t_lgbm_constrained"] = cv_constrained.best_estimator_.predict(X_train_t)
+
+# Calculate and print Deviance (Testing Loss)
+constrained_loss = TweedieDist.deviance(
+    y_test_t, df_test["pp_t_lgbm_constrained"], sample_weight=w_test_t
+) / np.sum(w_test_t)
+
+print(f"Best params (Constrained): {cv_constrained.best_params_}")
+print(f"Testing loss (Constrained LGBM): {constrained_loss}")
+
+# Comparison:
+# Usually, the Constrained Loss might be slightly higher or similar to the 
+# Unconstrained Loss, but the model now adheres to stricter business logic.
+
+
+#-------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
+
+
+
+# %%
+# ------------------------------------------------------------------------------
+# PS4 Ex 2: Learning Curve
+# ------------------------------------------------------------------------------
+
+import lightgbm as lgb # Needed for the plotting function
+
+# 1. Re-fit the best estimator with eval_set
+# -------------------------------------------------------
+# We need to extract the actual LGBMRegressor object from the Pipeline
+# because the Pipeline's .fit() method does not accept 'eval_set'.
+
+# Extract the 'estimate' step from the best pipeline found in Ex 1
+# This object already has the best hyperparameters (learning_rate=0.01, n_estimators=500)
+best_lgbm_model = cv_constrained.best_estimator_.named_steps["estimate"]
+
+print("Re-fitting the best model with eval_set to track convergence...")
+
+# We fit the model again. This time we provide:
+# - eval_set: A list of (X, y) pairs to evaluate during training.
+# - eval_names: Labels for the plot.
+# - eval_sample_weight: Crucial for insurance! We must weigh validation by exposure.
+# - eval_metric: 'tweedie' to track the Deviance.
+best_lgbm_model.fit(
+    X_train_t, y_train_t,
+    sample_weight=w_train_t,
+    eval_set=[(X_train_t, y_train_t), (X_test_t, y_test_t)],
+    eval_names=['Train', 'Test'],
+    eval_metric='tweedie',
+    eval_sample_weight=[w_train_t, w_test_t]
+)
+
+# 2. Plot the learning curve
+# -------------------------------------------------------
+# Use LightGBM's built-in plotting function to visualize the metric (tweedie deviance)
+# over the number of boosting iterations (trees).
+
+print("Plotting learning curve...")
+ax = lgb.plot_metric(best_lgbm_model, metric='tweedie', figsize=(10, 6))
+plt.title("Learning Curve (Tweedie Deviance)")
+plt.ylabel("Tweedie Deviance")
+plt.xlabel("Number of Estimators (Trees)")
+plt.grid(True, alpha=0.3)
+plt.show()
+
+# 3. Question 3
+# -------------------------------------------------------
+# What do you notice, is the estimator tuned optimally?
+#
+# The Training loss (blue line) decreases continuously, indicating the model keeps learning from the training data.
+# The Test loss (orange line) decreases initially but reaches a minimum around 280–300 trees. 
+# After that point, it plateaus and even slightly increases towards 500.
+# The estimator is not stricly optimal, as the model is slightly overfitting at 500 estimators. 
+# Since the test error stops improving after ~300 trees while the training error keeps dropping, 
+# the additional 200 trees are fitting noise rather than signal.
