@@ -546,9 +546,68 @@ print("="*60 + "\n")
 
 # %%
 # ------------------------------------------------------------------------------
-# PS4 Ex 5: Shapley
+# PS4 Ex 4: Evaluation plots (Partial Dependence Plots)
 # ------------------------------------------------------------------------------
 import dalex as dx
+
+# Step 1: Define explainer objects for both unconstrained and constrained LGBM models
+# -------------------------------------------------------
+# For the unconstrained LGBM
+exp_unconstrained = dx.Explainer(
+    cv.best_estimator_,
+    data=X_test_t,
+    y=y_test_t,
+    label="Unconstrained LGBM",
+    verbose=False
+)
+
+# For the constrained LGBM
+exp_constrained = dx.Explainer(
+    cv_constrained.best_estimator_,
+    data=X_test_t,
+    y=y_test_t,
+    label="Constrained LGBM",
+    verbose=False
+)
+
+print("Explainers created successfully!")
+
+# %%
+# Step 2: Compute marginal effects using model_profile and plot PDPs for all features
+# -------------------------------------------------------
+# Get all feature names
+all_features = X_test_t.columns.tolist()
+print(f"Computing PDPs for {len(all_features)} features...")
+
+# Compute PDPs for unconstrained model
+pdp_unconstrained = exp_unconstrained.model_profile(
+    variables=all_features,
+    verbose=False
+)
+
+# Compute PDPs for constrained model
+pdp_constrained = exp_constrained.model_profile(
+    variables=all_features,
+    verbose=False
+)
+
+# Plot and compare PDPs between the two models
+print("Plotting Partial Dependence Plots...")
+fig = pdp_unconstrained.plot(pdp_constrained, show=False)
+
+fig.update_layout(
+    title="Partial Dependence Plots: Unconstrained vs Constrained LGBM",
+    width=1200,
+    height=800,
+    margin=dict(l=100, r=100, t=100, b=100),
+)
+
+fig.show()
+
+# %%
+# ------------------------------------------------------------------------------
+# PS4 Ex 5: Shapley
+# ------------------------------------------------------------------------------
 
 # 1. Select a specific observation
 observation = X_test_t.iloc[[0]]
