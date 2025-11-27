@@ -13,6 +13,9 @@ from sklearn.preprocessing import OneHotEncoder, SplineTransformer, StandardScal
 
 from ps3.data import create_sample_split, load_transform
 
+from ps3.evaluation._evaluate_predictions import evaluate_predictions
+
+
 # %%
 # load data
 df = load_transform()
@@ -491,3 +494,52 @@ plt.show()
 # The estimator is not stricly optimal, as the model is slightly overfitting at 500 estimators. 
 # Since the test error stops improving after ~300 trees while the training error keeps dropping, 
 # the additional 200 trees are fitting noise rather than signal.
+
+
+# %%
+# ------------------------------------------------------------------------------
+# PS4 Ex 3(Q8): Compare constrained vs unconstrained LGBM using evaluation metrics
+# ------------------------------------------------------------------------------
+
+# Unconstrained LGBM metrics (from tuned cv.best_estimator_)
+metrics_unconstrained = evaluate_predictions(
+    actual=y_test_t,
+    predicted=df_test["pp_t_lgbm"],
+    weight=w_test_t,
+)
+metrics_unconstrained.columns = ["unconstrained_lgbm"]
+
+# Constrained LGBM metrics (from cv_constrained.best_estimator_)
+metrics_constrained = evaluate_predictions(
+    actual=y_test_t,
+    predicted=df_test["pp_t_lgbm_constrained"],
+    weight=w_test_t,
+)
+metrics_constrained.columns = ["constrained_lgbm"]
+
+# Combine into a single comparison table
+metrics_comparison = metrics_unconstrained.join(metrics_constrained)
+metrics_comparison.index.name = "Metrics"
+
+print("\n" + "="*60)
+print("Model Performance Comparison")
+print("="*60)
+print(metrics_comparison)
+print("="*60 + "\n")
+
+
+# -------------------------------------------------------
+#Interpretation:
+
+#The unconstrained LGBM performs slightly better across all predictive metrics:
+#it has lower deviance, MAE, and RMSE, and a higher Gini coefficient. This means
+# the unconstrained model captures the nonlinear patterns in the data more flexibly 
+# and ranks policyholders more accurately by risk.
+
+#The constrained model performs very close to the unconstrained one, but its
+#predictions respect the required monotonicity with respect to BonusMalus. This
+#consistency is often more important in pricing than the small loss in accuracy.
+
+#Overall, the unconstrained model is marginally more accurate, but the constrained
+#model is more appropriate for insurance pricing because it enforces monotonicity
+#while maintaining almost identical predictive performance.
