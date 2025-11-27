@@ -543,3 +543,51 @@ print("="*60 + "\n")
 #Overall, the unconstrained model is marginally more accurate, but the constrained
 #model is more appropriate for insurance pricing because it enforces monotonicity
 #while maintaining almost identical predictive performance.
+
+# %%
+# ------------------------------------------------------------------------------
+# PS4 Ex 5: Shapley
+# ------------------------------------------------------------------------------
+import dalex as dx
+
+# 1. Select a specific observation
+observation = X_test_t.iloc[[0]]
+print("Observation features:")
+print(observation.T)
+
+# 2. Define DALEX Explainers
+exp_glm = dx.Explainer(
+    t_glm1,
+    data=X_test_t,
+    y=y_test_t,
+    label="GLM Benchmark",
+    verbose=False
+)
+
+exp_lgbm = dx.Explainer(
+    cv_constrained.best_estimator_,
+    data=X_test_t,
+    y=y_test_t,
+    label="Constrained LGBM",
+    verbose=False
+)
+
+# 3. Calculate SHAP values
+shap_glm = exp_glm.predict_parts(observation, type="shap", B=25)
+shap_lgbm = exp_lgbm.predict_parts(observation, type="shap", B=25)
+
+# 4. Plot
+fig = shap_glm.plot(shap_lgbm, max_vars=10, show=False)
+
+fig.update_layout(
+    width=900,  
+    height=600, 
+    
+    margin=dict(l=200, r=100, t=80, b=50),
+)
+fig.show()
+
+# Comment: BonusMalus is the single most important feature for both models, significantly pulling the predicted premium down.
+# GLM is more sensitive compare to LGBM in many cases. For example, the bonus-malus score of GLM is -69.486, while the LGBM is -51.086.
+# GLM relies heavily on Area = E (+24.104) as a major risk factor, while the LGBM places higher importance on Density (+10.08)
+# %%
